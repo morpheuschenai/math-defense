@@ -205,6 +205,12 @@ const UPG_SPD  = 0.22;   // -cooldown per level (min 0.4s)
 // Icons for each upgrade attribute (filled vs dim)
 const UPG_ICONS = {damage:'⚔️', speed:'🏃', range:'🎯'};
 
+const DIFFICULTY_PRESETS = [
+  {id:'easy', label:'簡單', hpMul:0.85, spdMul:0.9, coinMul:1.2, lives:7},
+  {id:'normal', label:'普通', hpMul:1.0, spdMul:1.0, coinMul:1.0, lives:5},
+  {id:'hard', label:'困難', hpMul:1.25, spdMul:1.15, coinMul:0.85, lives:4},
+];
+
 // ════════════════════════════════════════════════════════
 // INFINITE WAVE GENERATION
 // ════════════════════════════════════════════════════════
@@ -212,21 +218,22 @@ function isBossWave(idx) { return (idx+1) % 5 === 0; }
 
 function getWaveConfig(idx) {
   const w = idx+1;
+  const dCfg = gs?.difficultyCfg || DIFFICULTY_PRESETS[1];
   if (isBossWave(idx)) {
     const mc = 2 + Math.floor(w/4);
     return {
       isBoss:true, totalCount:1+mc,
-      bossHp:20+w*7, bossSpeed:22,
-      minionHp:Math.max(1,Math.floor(w*0.6)),
-      minionSpeed:Math.min(95,28+w*2),
+      bossHp:Math.floor((20+w*7)*dCfg.hpMul), bossSpeed:22*dCfg.spdMul,
+      minionHp:Math.max(1,Math.floor(w*0.6*dCfg.hpMul)),
+      minionSpeed:Math.min(95,(28+w*2)*dCfg.spdMul),
       minionCount:mc, interval:1.6,
     };
   }
   return {
     isBoss:false,
     totalCount:4+Math.floor(w*1.8),
-    hp:Math.max(1,1+Math.floor(w*0.9)),
-    speed:Math.min(100,28+w*2.2),
+    hp:Math.max(1,Math.floor((1+Math.floor(w*0.9))*dCfg.hpMul)),
+    speed:Math.min(100,(28+w*2.2)*dCfg.spdMul),
     interval:Math.max(0.7,2.5-w*0.07),
   };
 }
@@ -305,7 +312,7 @@ class Enemy{
       this.x=tgt.x;this.y=tgt.y;this.wpIdx++;
       if(this.wpIdx>=WP.length-1){
         this.alive=false;
-        gs.lives=Math.max(0,gs.lives-(this.isBoss?3:1));
+        gs.lives=Math.max(0,gs.lives-(this.isBoss?2:1));
         if(gs.lives<=0)gs.phase='lose';
       }
     }else{this.x+=(dx/dist)*move;this.y+=(dy/dist)*move;}
@@ -314,6 +321,7 @@ class Enemy{
     this.hp=Math.max(0,this.hp-dmg);this.hitFlash=0.18;
     if(this.hp===0){
       this.alive=false;gs.coins+=this.isBoss?30:5;
+      if(this.isBoss)gs.chestAvailable=true;
       burst(this.x,this.y,this.isBoss?['#ff4488','#ff8800','#ffff00','#ff00ff','#fff']:['#44ee88','#88ffaa','#ffff44','#fff','#aaffff'],this.isBoss?26:14);
     }
   }
@@ -369,9 +377,21 @@ class Tower{
     this.cooldown=0;this.pulse=0;this.firing=0;
     this.upgrades={damage:0,speed:0,range:0};
   }
-  get effDamage()  {return this.d.damage+this.upgrades.damage*UPG_DMG;}
-  get effRange()   {return this.d.range +this.upgrades.range *UPG_RNG;}
-  get effCD()      {return Math.max(0.4,this.d.atkCD-this.upgrades.speed*UPG_SPD);}
+  get effDamage()  {
+    const boost=gs.globalBoostTimer>0?MAX_UPG:0;
+    const hero=gs.hero?gs.hero.attrs.attack:0;
+    return Math.round((this.d.damage+(this.upgrades.damage+boost)*UPG_DMG)*(1+hero*0.1));
+  }
+  get effRange()   {
+    const boost=gs.globalBoostTimer>0?MAX_UPG:0;
+    const hero=gs.hero?gs.hero.attrs.range:0;
+    return Math.round((this.d.range +(this.upgrades.range+boost)*UPG_RNG)*(1+hero*0.08));
+  }
+  get effCD()      {
+    const boost=gs.globalBoostTimer>0?MAX_UPG:0;
+    const hero=gs.hero?gs.hero.attrs.speed:0;
+    return Math.max(0.22,(this.d.atkCD-(this.upgrades.speed+boost)*UPG_SPD)/(1+hero*0.08));
+  }
 
   update(dt){
     if(this.cooldown>0)this.cooldown=Math.max(0,this.cooldown-dt);
@@ -466,18 +486,37 @@ class Bullet{
 // GAME STATE
 // ════════════════════════════════════════════════════════
 let gs, enemies, towers, bullets;
+let selectedTower=null;
+let chestSt={active:false,question:null,timer:0,correct:0,total:0};
+
+function makeHeroByTier(tier){
+  const defs={
+    1:{name:'見習勇者',emoji:'🛡️',skill:'全場暫停 5 秒'},
+    2:{name:'菁英勇者',emoji:'⚡',skill:'全塔屬性 MAX 5 秒'},
+    3:{name:'傳說勇者',emoji:'🔥',skill:'全場怪物扣 20% 血'},
+  };
+  return {tier, ...defs[tier], attrs:{attack:0,range:0,speed:0}, skillCd:0};
+}
 
 function initState(){
   gs={
     coins:200, lives:5, maxLives:5,
-    wave:0, phase:'pre',
+    wave:0, phase:'difficulty',
     betweenTimer:0, spawned:0, spawnTimer:0,
     difficulty:1, streak:0, wcfg:null,
     lastWaveReward:0,
+    difficultyCfg:DIFFICULTY_PRESETS[1],
+    chestAvailable:false,
+    hero:null,
+    globalPauseTimer:0,
+    globalBoostTimer:0,
+    phaseBeforeChest:'wave',
   };
   enemies=[];bullets=[];particles=[];
   towers=[new Tower(2,3,'cat')];
   qReset();
+  chestSt={active:false,question:null,timer:0,correct:0,total:0};
+  selectedTower=null;
   panelTarget=null;
   document.getElementById('panel').classList.remove('show');
   document.getElementById('qBar').classList.remove('show');
@@ -491,10 +530,45 @@ let qSt={status:'off',question:null,timer:0,waitTimer:0};
 
 function qReset(){qSt={status:'off',question:null,timer:0,waitTimer:0};}
 
+function chestQuestion(){
+  chestSt.question=makeQuestion(Math.min(5,gs.difficulty+1));
+  const q=chestSt.question;
+  document.getElementById('qLabel').innerHTML='🎁寶箱<br>10秒挑戰';
+  document.getElementById('qExpr').textContent=q.expr;
+  const btns=document.querySelectorAll('.qBtn');
+  btns.forEach((b,i)=>{b.textContent=q.choices[i];b.className='qBtn';b.disabled=false;});
+  document.getElementById('qFeedback').textContent=`答對 ${chestSt.correct} / ${chestSt.total}`;
+  document.getElementById('qFeedback').style.color='#9be6ff';
+  document.getElementById('qBar').classList.add('show');
+}
+
+function startChestChallenge(){
+  if(!gs.chestAvailable)return;
+  gs.phaseBeforeChest=gs.phase;
+  gs.phase='chest';
+  chestSt={active:true,question:null,timer:10,correct:0,total:0};
+  closePanel();
+  chestQuestion();
+}
+
+function finishChestChallenge(){
+  chestSt.active=false;
+  gs.chestAvailable=false;
+  let tier=0;
+  if(chestSt.correct>=20)tier=3;
+  else if(chestSt.correct>=10)tier=2;
+  else if(chestSt.correct>=5)tier=1;
+  if(tier>0&&(!gs.hero||tier>gs.hero.tier))gs.hero=makeHeroByTier(tier);
+  document.getElementById('qLabel').innerHTML='💡答題<br>賺金幣';
+  qReset();
+  gs.phase=gs.phaseBeforeChest;
+}
+
 function qStart(){
   qSt.status='active';
   qSt.question=makeQuestion(gs.difficulty);
   qSt.timer=Q_SECS;
+  document.getElementById('qLabel').innerHTML='💡答題<br>賺金幣';
   const q=qSt.question;
   document.getElementById('qExpr').textContent=q.expr;
   const btns=document.querySelectorAll('.qBtn');
@@ -505,6 +579,14 @@ function qStart(){
 }
 
 function qAnswer(choiceIdx){
+  if(chestSt.active){
+    const correct=choiceIdx===chestSt.question.ci;
+    chestSt.total++;
+    if(correct)chestSt.correct++;
+    document.getElementById('qFeedback').textContent=`${correct?'✅':'❌'} 答對 ${chestSt.correct} / ${chestSt.total}`;
+    chestQuestion();
+    return;
+  }
   if(qSt.status!=='active')return;
   const correct=choiceIdx===qSt.question.ci;
   const btns=document.querySelectorAll('.qBtn');
@@ -529,6 +611,12 @@ function qAnswer(choiceIdx){
 }
 
 function updateQuestions(dt){
+  if(chestSt.active){
+    chestSt.timer=Math.max(0,chestSt.timer-dt);
+    document.getElementById('qTimerBar').style.width=(chestSt.timer/10*100)+'%';
+    if(chestSt.timer<=0)finishChestChallenge();
+    return;
+  }
   const active=gs.phase==='wave'||gs.phase==='between';
   if(!active){
     if(qSt.status!=='off'){qReset();document.getElementById('qBar').classList.remove('show');}
@@ -553,7 +641,7 @@ document.querySelectorAll('.qBtn').forEach((btn,i)=>btn.addEventListener('click'
 // PANEL  (build + upgrade)
 // ════════════════════════════════════════════════════════
 let panelTarget=null;
-function closePanel(){panelTarget=null;document.getElementById('panel').classList.remove('show');}
+function closePanel(){panelTarget=null;selectedTower=null;document.getElementById('panel').classList.remove('show');}
 
 function posPanel(el,px,py,w,h){
   let mx=px+10,my=py-10;
@@ -588,6 +676,7 @@ function openBuildMenu(gx,gy,px,py){
 }
 
 function openUpgradeMenu(tower,px,py){
+  selectedTower=tower;
   panelTarget={type:'upgrade',tower};
   const panel=document.getElementById('panel');
 
@@ -650,7 +739,7 @@ function updateSpawn(dt){
   }
   if(gs.spawned>=cfg.totalCount&&enemies.every(e=>!e.alive)){
     gs.phase='between';gs.betweenTimer=3.5;
-    gs.lastWaveReward=50+gs.wave*5+(cfg.isBoss?80:0);
+    gs.lastWaveReward=Math.floor((50+gs.wave*5+(cfg.isBoss?80:0))*gs.difficultyCfg.coinMul);
     gs.coins+=gs.lastWaveReward;
   }
 }
@@ -703,8 +792,29 @@ function drawHUD(){
   ctx.fillStyle=isBossWave(gs.wave)?'#ff8888':'#aaccff';
   ctx.textAlign='center';ctx.fillText(isBossWave(gs.wave)?`⚠️ Wave ${wn} BOSS!`:`Wave ${wn}`,CW/2,HUD/2);
   ctx.fillStyle='#88aaff';ctx.font='13px sans-serif';ctx.textAlign='right';
-  ctx.fillText(`難度 Lv${gs.difficulty}  連答 ${gs.streak}/5`,CW-12,HUD/2);
+  ctx.fillText(`難度 ${gs.difficultyCfg.label} Lv${gs.difficulty}  連答 ${gs.streak}/5`,CW-12,HUD/2);
+  if(gs.chestAvailable){
+    ctx.textAlign='center';ctx.font='14px sans-serif';ctx.fillStyle='#ffd700';
+    ctx.fillText('🎁 點這裡開寶箱',CW-120,17);
+  }
+  if(gs.hero){
+    ctx.textAlign='left';ctx.font='12px sans-serif';ctx.fillStyle='#aaffff';
+    ctx.fillText(`${gs.hero.emoji}${gs.hero.name} 技能`,12,14);
+    ctx.fillStyle='#7fe67f';ctx.fillText('ATK+',12,32);
+    ctx.fillStyle='#7fc4ff';ctx.fillText('RNG+',64,32);
+    ctx.fillStyle='#d59bff';ctx.fillText('SPD+',116,32);
+  }
   ctx.restore();
+}
+
+function triggerHeroSkill(){
+  if(!gs.hero||gs.hero.skillCd>0)return;
+  if(gs.hero.tier===1)gs.globalPauseTimer=5;
+  if(gs.hero.tier===2)gs.globalBoostTimer=5;
+  if(gs.hero.tier===3){
+    for(const e of enemies){if(e.alive)e.hit(Math.ceil(e.hp*0.2));}
+  }
+  gs.hero.skillCd=18;
 }
 
 function drawModal(emoji,title,sub,hint){
@@ -727,15 +837,21 @@ let lastTs=0;
 function loop(ts){
   const dt=Math.min((ts-lastTs)/1000,0.1);lastTs=ts;
 
-  if(gs.phase==='wave'||gs.phase==='between'){
-    for(const e of enemies)  e.update(dt);
-    for(const t of towers)   t.update(dt);
-    for(const b of bullets)  b.update(dt);
+  if(gs.hero&&gs.hero.skillCd>0)gs.hero.skillCd=Math.max(0,gs.hero.skillCd-dt);
+  if(gs.globalPauseTimer>0)gs.globalPauseTimer=Math.max(0,gs.globalPauseTimer-dt);
+  if(gs.globalBoostTimer>0)gs.globalBoostTimer=Math.max(0,gs.globalBoostTimer-dt);
+
+  if(gs.phase==='wave'||gs.phase==='between'||gs.phase==='chest'){
+    if(gs.phase!=='chest'&&gs.globalPauseTimer<=0){
+      for(const e of enemies)  e.update(dt);
+      for(const t of towers)   t.update(dt);
+      for(const b of bullets)  b.update(dt);
+    }
     for(const p of particles)p.update(dt);
     bullets=bullets.filter(b=>b.alive);
     particles=particles.filter(p=>p.life>0);
     enemies=enemies.filter(e=>e.alive);
-    updateSpawn(dt);
+    if(gs.phase!=='chest')updateSpawn(dt);
     if(gs.phase==='between'){
       gs.betweenTimer-=dt;
       if(gs.betweenTimer<=0)startWave(gs.wave+1);
@@ -746,14 +862,20 @@ function loop(ts){
   // ── RENDER ──
   ctx.clearRect(0,0,CW,CH);
   drawBg();drawPath();drawHoverCell();
-  for(const t of towers){ctx.save();ctx.globalAlpha=0.07;ctx.fillStyle=t.d.color;ctx.beginPath();ctx.arc(t.x,t.y,t.effRange,0,Math.PI*2);ctx.fill();ctx.restore();}
+  if(selectedTower){
+    ctx.save();ctx.globalAlpha=0.16;ctx.fillStyle=selectedTower.d.color;
+    ctx.beginPath();ctx.arc(selectedTower.x,selectedTower.y,selectedTower.effRange,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  }
   for(const e of enemies)  e.draw();
   for(const t of towers)   t.draw();
   for(const b of bullets)  b.draw();
   for(const p of particles)p.draw();
   drawHUD();
 
-  if(gs.phase==='pre')drawModal('🏰','數學塔防','答對數學題賺金幣，讓塔不斷升級！','點擊任意位置開始遊戲 ▶');
+  if(gs.phase==='difficulty'){
+    drawModal('🏰','選擇難度','點擊下方按鈕後開始遊戲','🟢簡單   🔵普通   🔴困難');
+  }
   if(gs.phase==='between'){
     const nextIdx=gs.wave+1,nextBoss=isBossWave(nextIdx),t=Math.ceil(gs.betweenTimer);
     ctx.save();ctx.textAlign='center';ctx.textBaseline='middle';
@@ -761,6 +883,9 @@ function loop(ts){
     ctx.fillStyle=nextBoss?'#ff8888':'#ffd700';ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=12;
     ctx.fillText(nextBoss?`⚠️ 大魔王即將來臨！Wave ${nextIdx+1}  ↓ ${t}s`:`✨ 通關！＋${gs.lastWaveReward} 金幣　下一波：${t}s`,CW/2,CH/2-60);
     ctx.restore();
+  }
+  if(gs.phase==='chest'){
+    drawModal('🎁','寶箱限時挑戰中！',`剩餘 ${chestSt.timer.toFixed(1)} 秒，答對：${chestSt.correct}`,'快速答題爭取勇者');
   }
   if(gs.phase==='win'){const st='⭐'.repeat(Math.max(1,gs.lives));drawModal('🎉','恭喜通關！',`${st}  金幣：🪙 ${gs.coins}`,'點擊重新遊玩');}
   if(gs.phase==='lose')drawModal('💀','遊戲結束！','怪獸突破了防線⋯','點擊重新遊玩');
@@ -778,8 +903,30 @@ canvas.addEventListener('mouseleave',()=>{hoverCell=null;});
 canvas.addEventListener('click',e=>{
   const r=canvas.getBoundingClientRect();
   const mx=e.clientX-r.left,my=e.clientY-r.top;
-  if(gs.phase==='pre'){initState();startWave(0);return;}
+  if(gs.phase==='difficulty'){
+    const pick = mx<270 ? 0 : mx<530 ? 1 : 2;
+    gs.difficultyCfg=DIFFICULTY_PRESETS[pick];
+    gs.lives=gs.difficultyCfg.lives;
+    gs.maxLives=gs.difficultyCfg.lives;
+    gs.phase='pre';
+    startWave(0);
+    return;
+  }
   if(gs.phase==='win'||gs.phase==='lose'){initState();return;}
+  if(gs.chestAvailable&&my<24&&mx>CW-250){startChestChallenge();return;}
+  if(gs.hero&&my<40&&mx<180){
+    if(my<20&&mx<120){triggerHeroSkill();return;}
+    const slots=[
+      {x:12,key:'attack'},{x:64,key:'range'},{x:116,key:'speed'},
+    ];
+    for(const s of slots){
+      if(mx>=s.x&&mx<=s.x+42&&my>=22&&my<=40){
+        const cost=60+gs.hero.attrs[s.key]*35;
+        if(gs.coins>=cost){gs.coins-=cost;gs.hero.attrs[s.key]++;}
+        return;
+      }
+    }
+  }
   if(panelTarget){closePanel();return;}
   if(my<HUD||my>CH-Q_BAR_H)return; // ignore HUD and question bar area
   const gx=Math.floor(mx/CELL),gy=Math.floor(my/CELL);
