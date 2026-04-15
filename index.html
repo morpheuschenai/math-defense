@@ -227,6 +227,7 @@
       text-align: left;
       cursor: pointer;
     }
+    .ctrlOption.info { cursor: default; }
     .ctrlOption:first-of-type { margin-top: 0; }
     .ctrlOption.active {
       border-color: #ffd700;
@@ -313,14 +314,15 @@
       </div>
     </div>
     <div class="ctrlWrap">
-      <button id="difficultyToggleBtn" class="ctrlIconBtn" type="button" aria-label="遊戲難度">🎯</button>
+      <button id="difficultyToggleBtn" class="ctrlIconBtn" type="button" aria-label="題目等級說明">🎯</button>
       <span id="difficultyBadge" class="ctrlBadge">LV1</span>
-      <div id="difficultyMenu" class="ctrlMenu" role="dialog" aria-label="選擇遊戲難度">
+      <div id="difficultyMenu" class="ctrlMenu" role="dialog" aria-label="題目等級說明">
         <div class="ctrlMenuTitle">題目等級</div>
-        <button class="ctrlOption active" data-difficulty="1" type="button">LV1<small>連對 5 題，答對 +8 金幣</small></button>
-        <button class="ctrlOption" data-difficulty="2" type="button">LV2<small>連對 6 題，答對 +9 金幣</small></button>
-        <button class="ctrlOption" data-difficulty="3" type="button">LV3<small>連對 7 題，答對 +10 金幣</small></button>
-        <button class="ctrlOption" data-difficulty="4" type="button">LV4<small>連對 8 題，答對 +11 金幣</small></button>
+        <div class="ctrlOption info active" data-difficulty="1">LV1<small>連對 5 題，答對 +8 金幣</small></div>
+        <div class="ctrlOption info" data-difficulty="2">LV2<small>連對 6 題，答對 +9 金幣</small></div>
+        <div class="ctrlOption info" data-difficulty="3">LV3<small>連對 7 題，答對 +10 金幣</small></div>
+        <div class="ctrlOption info" data-difficulty="4">LV4<small>連對 8 題，答對 +11 金幣</small></div>
+        <div class="ctrlOption info" data-difficulty="5">LV5<small>連對 8 題，答對 +12 金幣</small></div>
       </div>
     </div>
   </div>
@@ -380,6 +382,9 @@ const UPG_SPD  = 0.22;   // -cooldown per level (min 0.4s)
 
 // Icons for each upgrade attribute (filled vs dim)
 const UPG_ICONS = {damage:'⚔️', speed:'🏃', range:'🎯'};
+const LOOT_DROP_RATE = 0.05;
+const LOOT_ATTRS = ['damage','speed','range'];
+const LOOT_ATTR_LABELS = {damage:'傷害', speed:'速度', range:'射程'};
 
 const QUESTION_LEVELS = [
   null,
@@ -387,6 +392,7 @@ const QUESTION_LEVELS = [
   {id:2, label:'LV2', goal:6, reward:9},
   {id:3, label:'LV3', goal:7, reward:10},
   {id:4, label:'LV4', goal:8, reward:11},
+  {id:5, label:'LV5', goal:8, reward:12},
 ];
 
 // ════════════════════════════════════════════════════════
@@ -438,10 +444,48 @@ function upIcons(attr, level) {
   return filled + empty;
 }
 
+function sample(arr){
+  return arr[Math.floor(Math.random()*arr.length)];
+}
+
+function makeLootReward(){
+  const roll=Math.random();
+  if(roll<0.45){
+    return {kind:'coins', amount:rnd(1,100)};
+  }
+  if(roll<0.85){
+    const attr=sample(LOOT_ATTRS);
+    return {kind:'upgrade', attr};
+  }
+  return {kind:'maxCat'};
+}
+
+function lootRewardText(reward){
+  if(!reward)return '';
+  if(reward.kind==='coins')return `🪙 金幣 +${reward.amount}`;
+  if(reward.kind==='upgrade')return `🎟️ ${LOOT_ATTR_LABELS[reward.attr]}升級券`;
+  return '🐱 滿級貓咪塔';
+}
+
+function applyTowerUpgrade(tower,attr,levels=1){
+  if(!tower||!attr)return false;
+  const before=tower.upgrades[attr];
+  tower.upgrades[attr]=Math.min(MAX_UPG,tower.upgrades[attr]+levels);
+  return tower.upgrades[attr]>before;
+}
+
+function applyHeroUpgrade(hero,attr,levels=1){
+  if(!hero||!attr)return false;
+  const key=attr==='damage'?'attack':attr;
+  if(!(key in hero.attrs))return false;
+  hero.attrs[key]+=levels;
+  return true;
+}
+
 // ════════════════════════════════════════════════════════
 // MATH QUESTION GENERATOR
 // ════════════════════════════════════════════════════════
-function getQuestionLevelMeta(level){return QUESTION_LEVELS[Math.max(1,Math.min(4,level))];}
+function getQuestionLevelMeta(level){return QUESTION_LEVELS[Math.max(1,Math.min(5,level))];}
 function pickQuestionTier(level){return rnd(1,Math.max(1,Math.min(4,level)));}
 
 function makeLv1Question(){
@@ -471,14 +515,26 @@ function makeCarryQuestion(needsCarry){
   return {a,b,op:'+'};
 }
 
-function makeQuestion(level) {
-  const tier=pickQuestionTier(level);
-  const spec = tier===1 ? makeLv1Question()
-    : tier===2 ? makeLv2Question()
-    : tier===3 ? makeCarryQuestion(false)
-    : makeCarryQuestion(true);
+function makeMaskedQuestion(spec){
   const {a,b,op}=spec;
   const ans=op==='+'?a+b:a-b;
+  const variants = op==='-'
+    ? [
+        {expr:`? ${op} ${b} = ${ans}`, ans:a},
+        {expr:`${a} ${op} ? = ${ans}`, ans:b},
+      ]
+    : [
+        {expr:`? ${op} ${b} = ${ans}`, ans:a},
+        {expr:`${a} ${op} ? = ${ans}`, ans:b},
+        {expr:`${a} ${op} ${b} = ?`, ans},
+      ];
+  return variants[rnd(0,variants.length-1)];
+}
+
+function buildQuestion(spec,tier,useMasked=false){
+  const prompt = useMasked ? makeMaskedQuestion(spec) : null;
+  const ans = prompt ? prompt.ans : (spec.op==='+' ? spec.a+spec.b : spec.a-spec.b);
+  const expr = prompt ? prompt.expr : `${spec.a} ${spec.op} ${spec.b} = ?`;
   const offs=shuffle([-3,-2,-1,1,2,3]);
   const wr=[];
   for(const o of offs){
@@ -491,7 +547,17 @@ function makeQuestion(level) {
     if(w!==ans&&!wr.includes(w))wr.push(w);
   }
   const choices=shuffle([ans,wr[0],wr[1]]);
-  return{expr:`${a} ${op} ${b} = ?`,ans,choices,ci:choices.indexOf(ans),tier};
+  return{expr,ans,choices,ci:choices.indexOf(ans),tier};
+}
+
+function makeQuestion(level) {
+  const tier=pickQuestionTier(level);
+  const spec = tier===1 ? makeLv1Question()
+    : tier===2 ? makeLv2Question()
+    : tier===3 ? makeCarryQuestion(false)
+    : makeCarryQuestion(true);
+  const useMasked = level>=5 && Math.random()<0.5;
+  return buildQuestion(spec,tier,useMasked);
 }
 
 // ════════════════════════════════════════════════════════
@@ -865,7 +931,7 @@ function toggleControlMenu(menuId, btnId){
 }
 
 function applyDifficultyPreset(index,isInit=false){
-  const pick=Math.max(1,Math.min(4,index));
+  const pick=Math.max(1,Math.min(5,index));
   gs.difficulty=pick;
   gs.streak=0;
   document.getElementById('difficultyBadge').textContent=`LV${pick}`;
@@ -1001,13 +1067,13 @@ function qAnswer(choiceIdx){
     const meta=getQuestionLevelMeta(gs.difficulty);
     const bonus=meta.reward;
     gs.coins+=bonus;gs.streak++;
-    if(gs.difficulty<4&&gs.streak>=meta.goal){
+    if(gs.difficulty<5&&gs.streak>=meta.goal){
       gs.difficulty++;
       gs.streak=0;
       applyDifficultyPreset(gs.difficulty);
       document.getElementById('qFeedback').textContent=`⬆️ 升到 LV${gs.difficulty}！本題 +${bonus} 金幣`;
     }else{
-      if(gs.difficulty===4)gs.streak=Math.min(gs.streak,meta.goal);
+      if(gs.difficulty===5)gs.streak=Math.min(gs.streak,meta.goal);
       document.getElementById('qFeedback').textContent=`✅ ＋${bonus} 金幣！`;
     }
     document.getElementById('qFeedback').style.color='#66ff99';
@@ -1429,13 +1495,6 @@ document.querySelectorAll('[data-speed]').forEach(btn=>btn.addEventListener('cli
   const v=Number(btn.dataset.speed)||1;
   setSpeed(v);
   closeControlMenus();
-}));
-document.querySelectorAll('[data-difficulty]').forEach(btn=>btn.addEventListener('click',e=>{
-  e.stopPropagation();
-  const pick=Number(btn.dataset.difficulty)||1;
-  applyDifficultyPreset(pick);
-  closeControlMenus();
-  if(!chestSt.active&&(gs.phase==='wave'||gs.phase==='between'))qStart();
 }));
 document.getElementById('speedToggleBtn').addEventListener('click',e=>{
   e.stopPropagation();
