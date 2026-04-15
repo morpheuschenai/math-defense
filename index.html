@@ -109,14 +109,36 @@
       background: #1a1a42;
       border: 2px solid #ffd700;
       border-radius: 14px;
-      padding: 10px 12px;
+      padding: 12px 12px 10px;
       display: none;
       z-index: 30;
       min-width: 230px;
       font-family: sans-serif;
     }
     #panel.show { display: block; }
-    #panel h3 { color: #ffd700; font-size: 13px; text-align: center; margin-bottom: 8px; }
+    #panel h3 {
+      color: #ffd700;
+      font-size: 13px;
+      text-align: center;
+      margin: 0 28px 8px;
+    }
+    .panelClose {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 24px;
+      height: 24px;
+      border: 0;
+      background: transparent;
+      color: #f5f5ff;
+      font: bold 18px/1 sans-serif;
+      cursor: pointer;
+      border-radius: 999px;
+    }
+    .panelClose:hover {
+      background: rgba(255,255,255,0.12);
+      color: #ffd700;
+    }
 
     .bOpt {
       display: flex; align-items: center; gap: 8px;
@@ -318,11 +340,11 @@
       <span id="difficultyBadge" class="ctrlBadge">LV1</span>
       <div id="difficultyMenu" class="ctrlMenu" role="dialog" aria-label="題目等級說明">
         <div class="ctrlMenuTitle">題目等級</div>
-        <div class="ctrlOption info active" data-difficulty="1">LV1<small>連對 5 題，答對 +8 金幣</small></div>
-        <div class="ctrlOption info" data-difficulty="2">LV2<small>連對 6 題，答對 +9 金幣</small></div>
-        <div class="ctrlOption info" data-difficulty="3">LV3<small>連對 7 題，答對 +10 金幣</small></div>
-        <div class="ctrlOption info" data-difficulty="4">LV4<small>連對 8 題，答對 +11 金幣</small></div>
-        <div class="ctrlOption info" data-difficulty="5">LV5<small>連對 8 題，答對 +12 金幣</small></div>
+        <button class="ctrlOption active" data-difficulty="1" type="button">LV1<small>連對 5 題，答對 +8 金幣</small></button>
+        <button class="ctrlOption" data-difficulty="2" type="button">LV2<small>連對 6 題，答對 +9 金幣</small></button>
+        <button class="ctrlOption" data-difficulty="3" type="button">LV3<small>連對 7 題，答對 +10 金幣</small></button>
+        <button class="ctrlOption" data-difficulty="4" type="button">LV4<small>連對 8 題，答對 +11 金幣</small></button>
+        <button class="ctrlOption" data-difficulty="5" type="button">LV5<small>最高等級，答對 +12 金幣</small></button>
       </div>
     </div>
   </div>
@@ -381,7 +403,7 @@ const UPG_RNG  = 18;     // +range per level
 const UPG_SPD  = 0.22;   // -cooldown per level (min 0.4s)
 
 // Icons for each upgrade attribute (filled vs dim)
-const UPG_ICONS = {damage:'⚔️', speed:'🏃', range:'🎯'};
+const UPG_ICONS = {damage:'⚔️', attack:'⚔️', speed:'🏃', range:'🎯'};
 const LOOT_DROP_RATE = 0.05;
 const LOOT_ATTRS = ['damage','speed','range'];
 const LOOT_ATTR_LABELS = {damage:'傷害', speed:'速度', range:'射程'};
@@ -825,6 +847,8 @@ let mousePos={x:CW/2,y:CH/2};
 function setMapNotice(text,duration=3){
   gs.mapNotice={text,timer:duration,duration};
 }
+let heroUid=1;
+const SECRET_HEART_SEQUENCE=[0,1,2];
 
 function makeHeroByTier(tier){
   const defs={
@@ -832,7 +856,90 @@ function makeHeroByTier(tier){
     2:{id:'rhino',name:'犀牛勇者',emoji:'🦏',skill:'全範圍緩速怪物 5 秒'},
     3:{id:'lion',name:'獅子勇者',emoji:'🦁',skill:'全範圍攻擊所有怪物 20% 血量'},
   };
-  return {tier, ...defs[tier], attrs:{attack:0,range:0,speed:0}, skillCd:0, attackCd:0, deployed:false,x:0,y:0,gx:-1,gy:-1};
+  return {
+    uid:heroUid++,
+    tier,
+    ...defs[tier],
+    attrs:{attack:0,range:0,speed:0},
+    skillCd:0,
+    attackCd:0,
+    skillFx:0,
+    deployed:false,
+    x:0,y:0,gx:-1,gy:-1
+  };
+}
+
+function getHeartHitIndex(mx,my){
+  ctx.save();
+  ctx.font='bold 16px sans-serif';
+  let x=12;
+  for(let i=0;i<gs.maxLives;i++){
+    const icon=i<gs.lives?'❤️':'🖤';
+    const width=ctx.measureText(icon+' ').width;
+    if(mx>=x && mx<=x+width && my>=8 && my<=HUD-8){
+      ctx.restore();
+      return i;
+    }
+    x+=width;
+  }
+  ctx.restore();
+  return -1;
+}
+
+function grantCheatHero(tier){
+  const hero=makeHeroByTier(tier);
+  gs.heroes.push(hero);
+  gs.pendingHero=hero;
+  hideOverlay();
+  enterHeroDeploy();
+}
+
+function bindSecretActions(){
+  document.getElementById('cheatCoinsBtn')?.addEventListener('click',()=>{
+    gs.coins+=100000;
+    hideOverlay();
+  });
+  document.getElementById('cheatFoxBtn')?.addEventListener('click',()=>grantCheatHero(1));
+  document.getElementById('cheatRhinoBtn')?.addEventListener('click',()=>grantCheatHero(2));
+  document.getElementById('cheatLionBtn')?.addEventListener('click',()=>grantCheatHero(3));
+  document.getElementById('cheatCancelBtn')?.addEventListener('click',()=>hideOverlay());
+}
+
+function showSecretDialog(){
+  closePanel();
+  showOverlay(`
+    <h2>🪄 秘技啟動</h2>
+    <p>選擇一個效果：</p>
+    <div class="ctaRow" style="flex-direction:column;align-items:stretch;">
+      <button id="cheatCoinsBtn" class="dlgBtn primary">增加 100000 金幣</button>
+      <button id="cheatFoxBtn" class="dlgBtn">部署狐狸勇者</button>
+      <button id="cheatRhinoBtn" class="dlgBtn">部署犀牛勇者</button>
+      <button id="cheatLionBtn" class="dlgBtn">部署獅子勇者</button>
+      <button id="cheatCancelBtn" class="dlgBtn">取消</button>
+    </div>
+  `);
+  bindSecretActions();
+}
+
+function handleSecretHeartClick(mx,my){
+  const heartIndex=getHeartHitIndex(mx,my);
+  if(heartIndex<0)return false;
+  const expected=SECRET_HEART_SEQUENCE[gs.secretHeartProgress] ?? -1;
+  if(heartIndex===expected){
+    gs.secretHeartProgress++;
+    if(gs.secretHeartProgress>=SECRET_HEART_SEQUENCE.length){
+      gs.secretHeartProgress=0;
+      showSecretDialog();
+    }
+  }else{
+    gs.secretHeartProgress=heartIndex===SECRET_HEART_SEQUENCE[0]?1:0;
+  }
+  return true;
+}
+
+function enterHeroDeploy(resumePhase=gs.phase){
+  gs.phaseBeforeChest=resumePhase;
+  gs.phase='heroDeploy';
 }
 
 function heroFootprintCells(hero){
@@ -930,6 +1037,37 @@ function claimLootChest(index){
   showLootDialog(reward);
 }
 
+function heroSkillStyle(hero){
+  const styles={
+    fox:{colors:['#d5f9ff','#9fe7ff','#ecffff'], ring:'#9fe7ff'},
+    rhino:{colors:['#efe4ff','#b7a0ff','#ffffff'], ring:'#b7a0ff'},
+    lion:{colors:['#ffcf66','#ff8a00','#fff1b8'], ring:'#ffb347'},
+  };
+  return styles[hero.id]||styles.fox;
+}
+
+function getAllHeroes(){
+  return gs.heroes||[];
+}
+
+function getDeployedHeroes(){
+  return getAllHeroes().filter(hero=>hero.deployed);
+}
+
+function getPendingHero(){
+  if(gs.pendingHero && !gs.pendingHero.deployed)return gs.pendingHero;
+  const nextHero=getAllHeroes().find(hero=>!hero.deployed) || null;
+  gs.pendingHero=nextHero;
+  return nextHero;
+}
+
+function heroBlocksCell(gx,gy,excludeHero=null){
+  return getDeployedHeroes().some(hero=>
+    hero!==excludeHero &&
+    heroFootprintCells(hero).some(([hx,hy])=>hx===gx&&hy===gy)
+  );
+}
+
 function getHeroTarget(hero){
   let best=null,bestIdx=-1;
   for(const e of enemies){
@@ -959,14 +1097,14 @@ function fireHeroAttack(hero,target){
 }
 
 function updateHeroCombat(dt){
-  const hero=gs.hero;
-  if(!hero||!hero.deployed)return;
-  if(hero.attackCd>0)hero.attackCd=Math.max(0,hero.attackCd-dt);
-  if(gs.phase!=='wave'&&gs.phase!=='between')return;
-  if(gs.globalPauseTimer>0)return;
-  if(hero.attackCd>0)return;
-  const target=getHeroTarget(hero);
-  if(target)fireHeroAttack(hero,target);
+  for(const hero of getDeployedHeroes()){
+    if(hero.attackCd>0)hero.attackCd=Math.max(0,hero.attackCd-dt);
+    if(gs.phase!=='wave'&&gs.phase!=='between')continue;
+    if(gs.globalPauseTimer>0)continue;
+    if(hero.attackCd>0)continue;
+    const target=getHeroTarget(hero);
+    if(target)fireHeroAttack(hero,target);
+  }
 }
 
 function heroCanPlaceAt(gx,gy){
@@ -974,14 +1112,14 @@ function heroCanPlaceAt(gx,gy){
   const cells=[[gx,gy],[gx+1,gy],[gx,gy+1],[gx+1,gy+1]];
   return cells.every(([cx,cy])=>{
     const px=cx*CELL+CELL/2,py=cy*CELL+CELL/2;
-    return py>=HUD && py<=CH-Q_BAR_H && !onPath(px,py) && !towers.some(t=>t.gx===cx&&t.gy===cy) && !(gs.hero&&gs.hero.deployed&&heroFootprintCells(gs.hero).some(([hx,hy])=>hx===cx&&hy===cy));
+    return py>=HUD && py<=CH-Q_BAR_H && !onPath(px,py) && !towers.some(t=>t.gx===cx&&t.gy===cy) && !heroBlocksCell(cx,cy);
   });
 }
 
 function canPlaceMaxCatAt(gx,gy){
   if(gx<0||gy<0||gx>=Math.floor(CW/CELL)||gy>=Math.floor((CH-Q_BAR_H)/CELL))return false;
   const cx=gx*CELL+CELL/2,cy=gy*CELL+CELL/2;
-  const heroBlocked=gs.hero&&gs.hero.deployed&&heroFootprintCells(gs.hero).some(([hx,hy])=>hx===gx&&hy===gy);
+  const heroBlocked=heroBlocksCell(gx,gy);
   return cy>=HUD+CELL/2 && cy<=CH-Q_BAR_H && !onPath(cx,cy) && !heroBlocked && !towers.some(t=>t.gx===gx&&t.gy===gy);
 }
 
@@ -1095,7 +1233,8 @@ function initState(){
     difficulty:1, streak:0, wcfg:null,
     lastWaveReward:0,
     chestAvailable:false,
-    hero:null,
+    heroes:[],
+    pendingHero:null,
     globalPauseTimer:0,
     globalSlowTimer:0,
     phaseBeforeChest:'wave',
@@ -1106,6 +1245,7 @@ function initState(){
     debugForcedLoot:false,
     gameSpeed:1,
     selectedHero:null,
+    secretHeartProgress:0,
   };
   enemies=[];bullets=[];particles=[];floatTexts=[];
   lootChests=[];
@@ -1218,17 +1358,17 @@ function finishChestChallenge(){
   chestSt.active=false;
   const tier=pickHeroTierByScore(chestSt.correct);
   const earned=tier?makeHeroByTier(tier):null;
-  const replaced=Boolean(earned&&(!gs.hero||earned.tier>gs.hero.tier));
-  if(replaced)gs.hero=earned;
-  const activeHero=replaced?earned:gs.hero;
+  if(earned){
+    gs.heroes.push(earned);
+    gs.pendingHero=earned;
+  }
+  const sameHeroCount=earned?gs.heroes.filter(hero=>hero.id===earned.id).length:0;
   const heroTxt=earned
-    ? replaced
-      ? `${earned.emoji} ${earned.name}`
-      : gs.hero&&gs.hero.id===earned.id
-        ? `${earned.emoji} ${earned.name}（已擁有，保留原勇者）`
-        : `${earned.emoji} ${earned.name}（已有更強勇者 ${gs.hero.emoji} ${gs.hero.name}）`
+    ? sameHeroCount>1
+      ? `${earned.emoji} ${earned.name}（可重複部署，目前 ${sameHeroCount} 位）`
+      : `${earned.emoji} ${earned.name}`
     : '未達門檻，尚未獲得勇者';
-  const skillTxt=activeHero?activeHero.skill:'答對 5 題即可獲得狐狸勇者';
+  const skillTxt=earned?earned.skill:'答對 5 題即可獲得狐狸勇者';
   showOverlay(`
     <h2>⏱️ 寶箱挑戰結束</h2>
     <p>完成題數：<b>${chestSt.total}</b>，答對：<b>${chestSt.correct}</b></p>
@@ -1238,7 +1378,7 @@ function finishChestChallenge(){
     </div>
     <p>門檻：5題🦊狐狸勇者 / 8題🦏犀牛勇者 / 12題以上🦁獅子勇者</p>
     <div class="ctaRow">
-      <button id="deployHeroBtn" class="dlgBtn primary" ${activeHero?'':'disabled style="opacity:.45;cursor:not-allowed"'}>部署勇者</button>
+      <button id="deployHeroBtn" class="dlgBtn primary" ${earned?'':'disabled style="opacity:.45;cursor:not-allowed"'}>部署勇者</button>
       <button id="skipDeployBtn" class="dlgBtn">稍後部署</button>
     </div>
   `);
@@ -1246,7 +1386,7 @@ function finishChestChallenge(){
   if(deployBtn&&!deployBtn.disabled){
     deployBtn.addEventListener('click',()=>{
       hideOverlay();
-      gs.phase='heroDeploy';
+      enterHeroDeploy(gs.phaseBeforeChest);
     });
   }
   document.getElementById('skipDeployBtn').addEventListener('click',()=>{
@@ -1343,6 +1483,10 @@ document.querySelectorAll('.qBtn').forEach((btn,i)=>btn.addEventListener('click'
 // ════════════════════════════════════════════════════════
 let panelTarget=null;
 function closePanel(){panelTarget=null;selectedTower=null;selectedHero=null;document.getElementById('panel').classList.remove('show');}
+function bindPanelClose(panel){
+  const closeBtn=panel.querySelector('[data-close-panel]');
+  if(closeBtn)closeBtn.addEventListener('click',e=>{e.stopPropagation();closePanel();});
+}
 
 function posPanel(el,px,py,w,h){
   let mx=px+10,my=py-10;
@@ -1356,7 +1500,7 @@ function openBuildMenu(gx,gy,px,py){
   panelTarget={type:'build',gx,gy};
   const panel=document.getElementById('panel');
   const list=[{type:'cat',...TOWER_DEFS.cat},{type:'dino',...TOWER_DEFS.dino},{type:'star',...TOWER_DEFS.star}];
-  let html='<h3>🏗 建造塔</h3>';
+  let html='<button class="panelClose" data-close-panel aria-label="關閉">✕</button><h3>🏗 建造塔</h3>';
   for(const t of list){
     const poor=gs.coins<t.cost?' poor':'';
     const aps=(1/t.atkCD).toFixed(2);
@@ -1367,13 +1511,12 @@ function openBuildMenu(gx,gy,px,py){
         <span class="bStats">⚔️×${t.damage} &nbsp;🎯${t.range} &nbsp;⚡${aps}/s${t.aoe?' 💥全':''}</span>
       </div></div>`;
   }
-  html+=`<div class="bOpt cancel" data-cancel>✕ 取消</div>`;
   panel.innerHTML=html;
   posPanel(panel,px,py,235,165);panel.classList.add('show');
+  bindPanelClose(panel);
   panel.querySelectorAll('.bOpt:not(.poor):not(.cancel)').forEach(el=>{
     el.addEventListener('click',e=>{e.stopPropagation();const cost=TOWER_DEFS[el.dataset.type].cost;if(gs.coins>=cost){gs.coins-=cost;towers.push(new Tower(gx,gy,el.dataset.type));}closePanel();});
   });
-  panel.querySelector('[data-cancel]').addEventListener('click',e=>{e.stopPropagation();closePanel();});
 }
 
 function openUpgradeMenu(tower,px,py){
@@ -1395,7 +1538,7 @@ function openUpgradeMenu(tower,px,py){
        curVal:`${tower.effRange}`,
        nextVal:`${tower.effRange+UPG_RNG}`},
     ];
-    let html=`<h3>${d.emoji} ${d.name} 升級</h3>`;
+    let html=`<button class="panelClose" data-close-panel aria-label="關閉">✕</button><h3>${d.emoji} ${d.name} 升級</h3>`;
     for(const row of rows){
       const lv=u[row.key],atMax=lv>=MAX_UPG;
       const cost=atMax?null:UPG_COST[lv];
@@ -1407,8 +1550,8 @@ function openUpgradeMenu(tower,px,py){
         <button class="upBtn ${btnCls}" data-attr="${row.key}">${atMax?'最高':'🪙 '+cost}</button>
       </div>`;
     }
-    html+=`<div class="bOpt cancel" data-cancel style="margin-top:6px">✕ 關閉</div>`;
     panel.innerHTML=html;
+    bindPanelClose(panel);
     panel.querySelectorAll('.upBtn:not(.maxed):not(.poor)').forEach(btn=>{
       btn.addEventListener('click',e=>{
         e.stopPropagation();
@@ -1418,7 +1561,6 @@ function openUpgradeMenu(tower,px,py){
         gs.coins-=cost;tower.upgrades[attr]++;render();
       });
     });
-    panel.querySelector('[data-cancel]').addEventListener('click',e=>{e.stopPropagation();closePanel();});
   }
   render();
   posPanel(panel,px,py,240,175);panel.classList.add('show');
@@ -1502,7 +1644,7 @@ function drawHoverCell(){
   }
   if(cy<HUD+CELL/2||onPath(cx,cy))return;
   const hasTower=towers.some(t=>t.gx===gx&&t.gy===gy);
-  const heroBlocked=gs.hero&&gs.hero.deployed&&heroFootprintCells(gs.hero).some(([hx,hy])=>hx===gx&&hy===gy);
+  const heroBlocked=heroBlocksCell(gx,gy);
   ctx.fillStyle=(hasTower||heroBlocked)?'rgba(255,215,0,0.1)':'rgba(255,255,255,0.15)';
   ctx.beginPath();ctx.roundRect(gx*CELL+2,gy*CELL+2,CELL-4,CELL-4,6);ctx.fill();
   ctx.strokeStyle='rgba(255,215,0,0.4)';ctx.lineWidth=1;ctx.stroke();
@@ -1521,9 +1663,11 @@ function drawHUD(){
   ctx.fillStyle='#88aaff';ctx.font='13px sans-serif';ctx.textAlign='right';
   const meta=getQuestionLevelMeta(gs.difficulty);
   ctx.fillText(`題目 LV${gs.difficulty}  連答 ${Math.min(gs.streak,meta.goal)}/${meta.goal}  +${meta.reward} 金幣  速度 x${gs.gameSpeed.toFixed(1)}`,CW-12,HUD/2);
-  if(gs.hero&&!gs.hero.deployed){
+  const pendingHero=getPendingHero();
+  const undeployedCount=getAllHeroes().filter(hero=>!hero.deployed).length;
+  if(pendingHero){
     ctx.textAlign='center';ctx.font='13px sans-serif';ctx.fillStyle='#ffd700';
-    ctx.fillText(`${gs.hero.emoji}${gs.hero.name} 尚未部署`,CW/2,17);
+    ctx.fillText(`${pendingHero.emoji}${pendingHero.name} 尚未部署${undeployedCount>1?`（待部署 ${undeployedCount} 位）`:''}`,CW/2,17);
   }
   if(gs.debugForcedLoot){
     ctx.textAlign='right';
@@ -1534,29 +1678,49 @@ function drawHUD(){
   ctx.restore();
 }
 
-function triggerHeroSkill(){
-  if(!gs.hero||!gs.hero.deployed||gs.hero.skillCd>0)return;
-  if(gs.hero.id==='fox')gs.globalPauseTimer=5;
-  if(gs.hero.id==='rhino')gs.globalSlowTimer=5;
-  if(gs.hero.id==='lion'){
+function triggerHeroSkill(hero){
+  if(!hero||!hero.deployed||hero.skillCd>0)return;
+  if(hero.id==='fox')gs.globalPauseTimer=5;
+  if(hero.id==='rhino')gs.globalSlowTimer=5;
+  if(hero.id==='lion'){
     for(const e of enemies){if(e.alive)e.hit(Math.ceil(e.hp*0.2));}
-    burst(gs.hero.x,gs.hero.y,['#ffcf66','#ff8a00','#fff1b8'],28);
   }
-  gs.hero.skillCd=18;
+  const fx=heroSkillStyle(hero);
+  burst(hero.x,hero.y,fx.colors,28);
+  hero.skillFx=0.7;
+  hero.skillCd=5;
+}
+
+function drawHeroSkillEffects(){
+  for(const hero of getDeployedHeroes()){
+    if(hero.skillFx<=0)continue;
+    const fx=heroSkillStyle(hero);
+    const pct=1-hero.skillFx/0.7;
+    ctx.save();
+    ctx.globalAlpha=Math.max(0,1-pct)*0.85;
+    ctx.strokeStyle=fx.ring;
+    ctx.lineWidth=4;
+    ctx.shadowColor=fx.ring;
+    ctx.shadowBlur=18;
+    ctx.beginPath();
+    ctx.arc(hero.x,hero.y,18+pct*44,0,Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function drawHero(){
-  if(!gs.hero||!gs.hero.deployed)return;
-  const h=gs.hero;
-  ctx.save();
-  const left=h.gx*CELL+4, top=h.gy*CELL+4, size=CELL*2-8;
-  ctx.fillStyle='#f8cf42';
-  ctx.strokeStyle='#8a5d00';
-  ctx.lineWidth=3;
-  ctx.beginPath();ctx.roundRect(left,top,size,size,14);ctx.fill();ctx.stroke();
-  ctx.font='44px serif';ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.fillText(h.emoji,h.x,h.y);
-  ctx.restore();
+  for(const h of getDeployedHeroes()){
+    ctx.save();
+    const left=h.gx*CELL+4, top=h.gy*CELL+4, size=CELL*2-8;
+    ctx.fillStyle='#f8cf42';
+    ctx.strokeStyle='#8a5d00';
+    ctx.lineWidth=3;
+    ctx.beginPath();ctx.roundRect(left,top,size,size,14);ctx.fill();ctx.stroke();
+    ctx.font='44px serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(h.emoji,h.x,h.y);
+    ctx.restore();
+  }
 }
 
 function drawLootCursor(){
@@ -1577,36 +1741,44 @@ function drawLootCursor(){
 }
 
 function heroAt(mx,my){
-  if(!gs.hero||!gs.hero.deployed)return false;
-  return mx>=gs.hero.gx*CELL && mx<gs.hero.gx*CELL+CELL*2 && my>=gs.hero.gy*CELL && my<gs.hero.gy*CELL+CELL*2;
+  const gx=Math.floor(mx/CELL);
+  const gy=Math.floor(my/CELL);
+  const byCell=getDeployedHeroes().find(hero=>
+    heroFootprintCells(hero).some(([hx,hy])=>hx===gx&&hy===gy)
+  );
+  if(byCell)return byCell;
+  return getDeployedHeroes().find(hero=>
+    mx>=hero.gx*CELL-6 && mx<hero.gx*CELL+CELL*2+6 &&
+    my>=hero.gy*CELL-6 && my<hero.gy*CELL+CELL*2+6
+  ) || null;
 }
 
-function openHeroMenu(mx,my){
-  if(!gs.hero||!gs.hero.deployed)return;
-  const hero=gs.hero;
+function openHeroMenu(hero,mx,my){
+  if(!hero||!hero.deployed)return;
   selectedHero=hero;
   selectedTower=null;
   panelTarget={type:'hero',hero};
+  hideOverlay();
   const panel=document.getElementById('panel');
   function attrCost(k){return 70+hero.attrs[k]*40;}
   function renderHero(){
     const rows=[['attack','⚔️ 傷害'],['speed','🏃 速度'],['range','🎯 射程']];
-    let html=`<h3>${hero.emoji} ${hero.name}</h3>`;
+    let html=`<button class="panelClose" data-close-panel aria-label="關閉">✕</button><h3>${hero.emoji} ${hero.name}</h3>`;
     for(const [key,label] of rows){
       const cost=attrCost(key);
       const poor=gs.coins<cost?' poor':'';
       html+=`<div class="upRow">
         <span class="upAttr">${label}</span>
-        <span class="upIcons">Lv.${hero.attrs[key]}</span>
+        <span class="upIcons">${upIcons(key,hero.attrs[key])}</span>
         <button class="upBtn${poor}" data-hattr="${key}">🪙 ${cost}</button>
       </div>`;
     }
-    html+=`<div style="margin-top:8px;color:#9be6ff;font-size:12px;">技能：${hero.skill}</div>`;
+    html+=`<div style="margin-top:10px;color:#9be6ff;font-size:12px;">技能：${hero.skill}</div>`;
     const cdTxt=hero.skillCd>0?`冷卻 ${hero.skillCd.toFixed(1)}s`:'可施放';
     html+=`<div style="margin-top:6px;color:#ffd700;font-size:12px;">${cdTxt}</div>`;
     html+=`<div class="ctaRow"><button class="dlgBtn ${hero.skillCd>0?'':'primary'}" data-skill ${hero.skillCd>0?'disabled style="opacity:.5;cursor:not-allowed"':''}>發動</button></div>`;
-    html+=`<div class="bOpt cancel" data-cancel style="margin-top:6px">✕ 關閉</div>`;
     panel.innerHTML=html;
+    bindPanelClose(panel);
     panel.querySelectorAll('[data-hattr]').forEach(btn=>btn.addEventListener('click',e=>{
       e.stopPropagation();
       const key=btn.dataset.hattr,cost=attrCost(key);
@@ -1614,11 +1786,11 @@ function openHeroMenu(mx,my){
       gs.coins-=cost;hero.attrs[key]++;renderHero();
     }));
     const sk=panel.querySelector('[data-skill]');
-    if(sk&&!sk.disabled)sk.addEventListener('click',e=>{e.stopPropagation();triggerHeroSkill();renderHero();});
-    panel.querySelector('[data-cancel]').addEventListener('click',e=>{e.stopPropagation();closePanel();});
+    if(sk&&!sk.disabled)sk.addEventListener('click',e=>{e.stopPropagation();triggerHeroSkill(hero);renderHero();});
   }
   renderHero();
-  posPanel(panel,mx,my,262,235);panel.classList.add('show');
+  posPanel(panel,mx,my,262,235);
+  panel.classList.add('show');
 }
 
 function drawModal(emoji,title,sub,hint){
@@ -1700,7 +1872,10 @@ function loop(ts){
     if(gs.mapNotice.timer<=0)gs.mapNotice=null;
   }
 
-  if(gs.hero&&gs.hero.skillCd>0)gs.hero.skillCd=Math.max(0,gs.hero.skillCd-simDt);
+  for(const hero of getAllHeroes()){
+    if(hero.skillCd>0)hero.skillCd=Math.max(0,hero.skillCd-simDt);
+    if(hero.skillFx>0)hero.skillFx=Math.max(0,hero.skillFx-simDt);
+  }
   if(gs.globalPauseTimer>0)gs.globalPauseTimer=Math.max(0,gs.globalPauseTimer-simDt);
   if(gs.globalSlowTimer>0)gs.globalSlowTimer=Math.max(0,gs.globalSlowTimer-simDt);
   updateHeroCombat(simDt);
@@ -1740,6 +1915,7 @@ function loop(ts){
   }
   for(const e of enemies)  e.draw();
   drawLootChests();
+  drawHeroSkillEffects();
   drawHero();
   for(const t of towers)   t.draw();
   for(const b of bullets)  b.draw();
@@ -1760,7 +1936,8 @@ function loop(ts){
     drawModal('🎁','寶箱限時挑戰中！',`剩餘 ${chestSt.timer.toFixed(1)} 秒，答對：${chestSt.correct}`,'快速答題爭取勇者');
   }
   if(gs.phase==='heroDeploy'){
-    drawCornerHint(gs.hero?gs.hero.emoji:'🧭','部署勇者中','請點擊地圖空地放置勇者','部署完成後自動恢復遊戲');
+    const pendingHero=getPendingHero();
+    drawCornerHint(pendingHero?pendingHero.emoji:'🧭','部署勇者中','請點擊地圖空地放置勇者','部署完成後自動恢復遊戲');
   }
   if(gs.phase==='lootDeployCat'){
     drawCornerHint('🐱','立即部署滿級貓咪塔','三種屬性都已滿級',gs.lootMessage||'請點擊地圖空地放置');
@@ -1816,14 +1993,27 @@ canvas.addEventListener('click',e=>{
     placeLootCatTower(gx,gy);
     return;
   }
+  const clickedHero=heroAt(mx,my);
+  if(clickedHero && gs.phase!=='chestIntro'){
+    if(gs.phase==='heroDeploy')gs.phase=gs.phaseBeforeChest;
+    closeControlMenus();
+    openHeroMenu(clickedHero,mx,my);
+    return;
+  }
+  if(handleSecretHeartClick(mx,my))return;
   if(gs.phase==='heroDeploy'){
     if(my<HUD||my>CH-Q_BAR_H)return;
     const gx=Math.floor(mx/CELL),gy=Math.floor(my/CELL);
     if(!heroCanPlaceAt(gx,gy))return;
     const cx=gx*CELL+CELL,cy=gy*CELL+CELL;
-    if(gs.hero){
-      gs.hero.gx=gx;gs.hero.gy=gy;gs.hero.x=cx;gs.hero.y=cy;gs.hero.deployed=true;
+    const pendingHero=getPendingHero();
+    if(pendingHero){
+      pendingHero.gx=gx;pendingHero.gy=gy;pendingHero.x=cx;pendingHero.y=cy;pendingHero.deployed=true;
+      const placedHero=pendingHero;
+      gs.pendingHero=getPendingHero();
       gs.phase=gs.phaseBeforeChest;
+      closeControlMenus();
+      openHeroMenu(placedHero,placedHero.x,placedHero.y);
     }
     return;
   }
@@ -1831,14 +2021,13 @@ canvas.addEventListener('click',e=>{
   closeControlMenus();
   const lootHit=lootChestAt(mx,my);
   if(lootHit){claimLootChest(lootHit.index);return;}
-  if(heroAt(mx,my)){openHeroMenu(mx,my);return;}
   if(panelTarget){closePanel();return;}
   if(my<HUD||my>CH-Q_BAR_H)return; // ignore HUD and question bar area
   const gx=Math.floor(mx/CELL),gy=Math.floor(my/CELL);
   const cx=gx*CELL+CELL/2,cy=gy*CELL+CELL/2;
   const existing=towers.find(t=>t.gx===gx&&t.gy===gy);
   if(existing){openUpgradeMenu(existing,mx,my);return;}
-  const heroBlocked=gs.hero&&gs.hero.deployed&&heroFootprintCells(gs.hero).some(([hx,hy])=>hx===gx&&hy===gy);
+  const heroBlocked=heroBlocksCell(gx,gy);
   if(!onPath(cx,cy)&&!heroBlocked)openBuildMenu(gx,gy,mx,my);
 });
 
