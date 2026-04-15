@@ -450,13 +450,8 @@ function sample(arr){
 
 function makeLootReward(){
   const roll=Math.random();
-  if(roll<0.45){
-    return {kind:'coins', amount:rnd(1,100)};
-  }
-  if(roll<0.85){
-    const attr=sample(LOOT_ATTRS);
-    return {kind:'upgrade', attr};
-  }
+  if(roll<0.5)return {kind:'coins', amount:rnd(1,100)};
+  if(roll<0.9)return {kind:'upgrade', attr:sample(LOOT_ATTRS)};
   return {kind:'maxCat'};
 }
 
@@ -467,6 +462,12 @@ function lootRewardText(reward){
   return '🐱 滿級貓咪塔';
 }
 
+function lootRewardDetail(reward){
+  if(!reward)return '';
+  if(reward.kind==='coins')return `按下使用後，立即獲得 ${reward.amount} 金幣`;
+  if(reward.kind==='upgrade')return `按下使用後，選擇地圖上任一座塔，將 ${LOOT_ATTR_LABELS[reward.attr]} 提升 1 級`;
+  return '按下使用後，可在地圖空地部署一座三項屬性都滿級的貓咪塔';
+}
 function applyTowerUpgrade(tower,attr,levels=1){
   if(!tower||!attr)return false;
   const before=tower.upgrades[attr];
@@ -574,6 +575,34 @@ function burst(x,y,colors,n){
     particles.push(new Particle(x,y,Math.cos(ang)*spd,Math.sin(ang)*spd-60,colors[Math.floor(Math.random()*colors.length)],0.8+Math.random()*0.4));}
 }
 
+let floatTexts=[];
+class FloatText{
+  constructor(x,y,text,color='#ffe680'){
+    Object.assign(this,{x,y,text,color,life:0.9,maxLife:0.9});
+  }
+  update(dt){
+    this.y-=30*dt;
+    this.life-=dt;
+  }
+  draw(){
+    const a=Math.max(0,this.life/this.maxLife);
+    ctx.save();
+    ctx.globalAlpha=a;
+    ctx.fillStyle=this.color;
+    ctx.font='bold 26px sans-serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.shadowColor=this.color;
+    ctx.shadowBlur=14;
+    ctx.fillText(this.text,this.x,this.y);
+    ctx.restore();
+  }
+}
+
+function showFloatText(x,y,text,color){
+  floatTexts.push(new FloatText(x,y,text,color));
+}
+
 // ════════════════════════════════════════════════════════
 // ENEMY
 // ════════════════════════════════════════════════════════
@@ -606,6 +635,7 @@ class Enemy{
     this.hp=Math.max(0,this.hp-dmg);this.hitFlash=0.18;
     if(this.hp===0){
       this.alive=false;gs.coins+=this.isBoss?30:5;
+      maybeDropLoot(this);
       if(this.isBoss&&gs.phase!=='chest'&&gs.phase!=='chestIntro'&&gs.phase!=='heroDeploy')showChestIntro();
       burst(this.x,this.y,this.isBoss?['#ff4488','#ff8800','#ffff00','#ff00ff','#fff']:['#44ee88','#88ffaa','#ffff44','#fff','#aaffff'],this.isBoss?26:14);
     }
@@ -789,6 +819,12 @@ let gs, enemies, towers, bullets;
 let selectedTower=null;
 let selectedHero=null;
 let chestSt={active:false,question:null,timer:0,correct:0,total:0};
+let lootChests=[];
+let mousePos={x:CW/2,y:CH/2};
+
+function setMapNotice(text,duration=3){
+  gs.mapNotice={text,timer:duration,duration};
+}
 
 function makeHeroByTier(tier){
   const defs={
@@ -819,6 +855,79 @@ function heroEffDamage(hero){
 
 function heroEffCD(hero){
   return Math.max(0.4,1.6 - hero.attrs.speed*0.14);
+}
+
+function spawnLootChest(x,y){
+  lootChests.push({
+    x,y,
+    reward:makeLootReward(),
+    pulse:Math.random()*Math.PI*2,
+    bob:Math.random()*Math.PI*2,
+    r:18,
+  });
+  setMapNotice('有寶箱掉落，點擊即可查看內容');
+}
+
+function maybeDropLoot(enemy){
+  if(gs.debugForcedLoot||Math.random()<LOOT_DROP_RATE)spawnLootChest(enemy.x,enemy.y);
+}
+
+function updateLootChests(dt){
+  for(const chest of lootChests){
+    chest.pulse+=dt*3;
+    chest.bob+=dt*2.2;
+  }
+}
+
+function drawLootChests(){
+  for(const chest of lootChests){
+    const bob=Math.sin(chest.bob)*4;
+    const scale=1+Math.sin(chest.pulse)*0.06;
+    ctx.save();
+    ctx.translate(chest.x,chest.y+bob);
+    ctx.scale(scale,scale);
+    ctx.shadowColor='#ffd54a';
+    ctx.shadowBlur=16;
+    ctx.fillStyle='#8a4f1c';
+    ctx.strokeStyle='#ffd54a';
+    ctx.lineWidth=3;
+    ctx.beginPath();ctx.roundRect(-16,-11,32,24,7);ctx.fill();ctx.stroke();
+    ctx.fillStyle='#ffd54a';
+    ctx.fillRect(-16,-1,32,5);
+    ctx.fillRect(-2,-11,4,24);
+    ctx.fillStyle='#fff3b0';
+    ctx.font='16px serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText('🎁',0,-24);
+    ctx.restore();
+  }
+}
+
+function lootChestAt(mx,my){
+  for(let i=lootChests.length-1;i>=0;i--){
+    const chest=lootChests[i];
+    const bob=Math.sin(chest.bob)*4;
+    if(Math.hypot(mx-chest.x,my-(chest.y+bob))<=chest.r)return {chest,index:i};
+  }
+  return null;
+}
+
+function claimLootChest(index){
+  const [chest]=lootChests.splice(index,1);
+  if(!chest)return;
+  const reward=chest.reward;
+  if(reward.kind==='upgrade'&&!hasLootUpgradeTarget(reward.attr))reward.fallbackCoins=50;
+  if(reward.kind==='maxCat'&&!hasMaxCatPlacement())reward.fallbackCoins=80;
+  reward.sourceX=chest.x;
+  reward.sourceY=chest.y;
+  gs.activeLoot=reward;
+  gs.phaseBeforeLoot=gs.phase;
+  gs.phase='lootDialog';
+  closePanel();
+  burst(chest.x,chest.y,['#ffd54a','#fff3a8','#ffffff'],22);
+  setMapNotice(`寶箱內容：${lootRewardText(reward)}`);
+  showLootDialog(reward);
 }
 
 function getHeroTarget(hero){
@@ -865,8 +974,117 @@ function heroCanPlaceAt(gx,gy){
   const cells=[[gx,gy],[gx+1,gy],[gx,gy+1],[gx+1,gy+1]];
   return cells.every(([cx,cy])=>{
     const px=cx*CELL+CELL/2,py=cy*CELL+CELL/2;
-    return py>=HUD && py<=CH-Q_BAR_H && !onPath(px,py) && !towers.some(t=>t.gx===cx&&t.gy===cy);
+    return py>=HUD && py<=CH-Q_BAR_H && !onPath(px,py) && !towers.some(t=>t.gx===cx&&t.gy===cy) && !(gs.hero&&gs.hero.deployed&&heroFootprintCells(gs.hero).some(([hx,hy])=>hx===cx&&hy===cy));
   });
+}
+
+function canPlaceMaxCatAt(gx,gy){
+  if(gx<0||gy<0||gx>=Math.floor(CW/CELL)||gy>=Math.floor((CH-Q_BAR_H)/CELL))return false;
+  const cx=gx*CELL+CELL/2,cy=gy*CELL+CELL/2;
+  const heroBlocked=gs.hero&&gs.hero.deployed&&heroFootprintCells(gs.hero).some(([hx,hy])=>hx===gx&&hy===gy);
+  return cy>=HUD+CELL/2 && cy<=CH-Q_BAR_H && !onPath(cx,cy) && !heroBlocked && !towers.some(t=>t.gx===gx&&t.gy===gy);
+}
+
+function hasLootUpgradeTarget(attr){
+  const towerReady=towers.some(t=>t.upgrades[attr]<MAX_UPG);
+  return towerReady;
+}
+
+function hasMaxCatPlacement(){
+  const maxGX=Math.floor(CW/CELL);
+  const maxGY=Math.floor((CH-Q_BAR_H)/CELL);
+  for(let gy=0;gy<maxGY;gy++){
+    for(let gx=0;gx<maxGX;gx++){
+      if(canPlaceMaxCatAt(gx,gy))return true;
+    }
+  }
+  return false;
+}
+
+function finishLootUse(nextPhase=gs.phaseBeforeLoot||'wave'){
+  gs.activeLoot=null;
+  gs.lootMessage='';
+  gs.phaseBeforeLoot='wave';
+  gs.phase=nextPhase;
+  hideOverlay();
+}
+
+function useLootUpgradeOnTarget(mx,my){
+  const reward=gs.activeLoot;
+  if(!reward||reward.kind!=='upgrade')return false;
+  const gx=Math.floor(mx/CELL),gy=Math.floor(my/CELL);
+  const tower=towers.find(t=>t.gx===gx&&t.gy===gy);
+  if(tower&&applyTowerUpgrade(tower,reward.attr,1)){
+    burst(tower.x,tower.y,['#9fe7ff','#ffd54a','#ffffff'],20);
+    finishLootUse();
+    return true;
+  }
+  return false;
+}
+
+function placeLootCatTower(gx,gy){
+  if(!canPlaceMaxCatAt(gx,gy))return false;
+  const tower=new Tower(gx,gy,'cat');
+  tower.upgrades.damage=MAX_UPG;
+  tower.upgrades.speed=MAX_UPG;
+  tower.upgrades.range=MAX_UPG;
+  towers.push(tower);
+  burst(tower.x,tower.y,['#ffd54a','#fff3a8','#ffffff'],26);
+  finishLootUse();
+  return true;
+}
+
+function useCoinLoot(){
+  const reward=gs.activeLoot;
+  if(!reward||reward.kind!=='coins')return false;
+  gs.coins+=reward.amount;
+  showFloatText(reward.sourceX||CW/2,reward.sourceY||HUD+42,`+${reward.amount}`,'#ffd54a');
+  burst(reward.sourceX||CW/2,reward.sourceY||HUD+42,['#ffd54a','#fff3a8','#ffffff'],18);
+  finishLootUse();
+  return true;
+}
+
+function confirmLootUse(){
+  const reward=gs.activeLoot;
+  if(!reward)return;
+  if(reward.fallbackCoins){
+    gs.coins+=reward.fallbackCoins;
+    showFloatText(reward.sourceX||CW/2,reward.sourceY||HUD+42,`+${reward.fallbackCoins}`,'#ffd54a');
+    burst(reward.sourceX||CW/2,reward.sourceY||HUD+42,['#ffd54a','#fff3a8','#ffffff'],18);
+    setMapNotice(`寶箱內容：改為獲得 ${reward.fallbackCoins} 金幣`);
+    finishLootUse();
+    return;
+  }
+  if(reward.kind==='coins'){
+    useCoinLoot();
+    return;
+  }
+  gs.lootMessage=reward.kind==='upgrade'
+    ? `請點擊任一座塔，使用 ${LOOT_ATTR_LABELS[reward.attr]}升級券`
+    : '請點擊地圖空地，部署滿級貓咪塔';
+  setMapNotice(`寶箱內容：${lootRewardText(reward)}`);
+  hideOverlay();
+  gs.phase=reward.kind==='upgrade'?'lootUpgrade':'lootDeployCat';
+}
+
+function showLootDialog(reward){
+  if(!reward)return;
+  const title=reward.kind==='coins'?'🪙 發現金幣寶箱':reward.kind==='upgrade'?'🎟️ 發現升級寶箱':'🐱 發現滿級塔寶箱';
+  const detail=reward.fallbackCoins
+    ? `目前無法直接使用，按下使用後會改為獲得 ${reward.fallbackCoins} 金幣`
+    : lootRewardDetail(reward);
+  showOverlay(`
+    <h2>${title}</h2>
+    <div class="heroCard">
+      寶箱內容：<b>${lootRewardText(reward)}</b><br>
+      ${detail}
+    </div>
+    <div class="ctaRow">
+      <button id="useLootBtn" class="dlgBtn primary">使用</button>
+    </div>
+  `);
+  const useBtn=document.getElementById('useLootBtn');
+  if(useBtn)useBtn.addEventListener('click',()=>confirmLootUse());
 }
 
 function initState(){
@@ -881,10 +1099,16 @@ function initState(){
     globalPauseTimer:0,
     globalSlowTimer:0,
     phaseBeforeChest:'wave',
+    phaseBeforeLoot:'wave',
+    activeLoot:null,
+    lootMessage:'',
+    mapNotice:null,
+    debugForcedLoot:false,
     gameSpeed:1,
     selectedHero:null,
   };
-  enemies=[];bullets=[];particles=[];
+  enemies=[];bullets=[];particles=[];floatTexts=[];
+  lootChests=[];
   towers=[new Tower(2,3,'cat')];
   qReset();
   chestSt={active:false,question:null,timer:0,correct:0,total:0};
@@ -1266,6 +1490,16 @@ function drawHoverCell(){
     ctx.restore();
     return;
   }
+  if(gs.phase==='lootDeployCat'){
+    const canPlace=canPlaceMaxCatAt(gx,gy);
+    ctx.save();
+    ctx.fillStyle=canPlace?'rgba(255,215,74,0.2)':'rgba(255,90,90,0.2)';
+    ctx.strokeStyle=canPlace?'rgba(255,236,140,0.95)':'rgba(255,120,120,0.9)';
+    ctx.lineWidth=2;
+    ctx.beginPath();ctx.roundRect(gx*CELL+2,gy*CELL+2,CELL-4,CELL-4,6);ctx.fill();ctx.stroke();
+    ctx.restore();
+    return;
+  }
   if(cy<HUD+CELL/2||onPath(cx,cy))return;
   const hasTower=towers.some(t=>t.gx===gx&&t.gy===gy);
   const heroBlocked=gs.hero&&gs.hero.deployed&&heroFootprintCells(gs.hero).some(([hx,hy])=>hx===gx&&hy===gy);
@@ -1290,6 +1524,12 @@ function drawHUD(){
   if(gs.hero&&!gs.hero.deployed){
     ctx.textAlign='center';ctx.font='13px sans-serif';ctx.fillStyle='#ffd700';
     ctx.fillText(`${gs.hero.emoji}${gs.hero.name} 尚未部署`,CW/2,17);
+  }
+  if(gs.debugForcedLoot){
+    ctx.textAlign='right';
+    ctx.font='12px sans-serif';
+    ctx.fillStyle='#7dff9f';
+    ctx.fillText('DEBUG: 必掉寶箱 ON (按 D 關閉)',CW-12,18);
   }
   ctx.restore();
 }
@@ -1316,6 +1556,23 @@ function drawHero(){
   ctx.beginPath();ctx.roundRect(left,top,size,size,14);ctx.fill();ctx.stroke();
   ctx.font='44px serif';ctx.textAlign='center';ctx.textBaseline='middle';
   ctx.fillText(h.emoji,h.x,h.y);
+  ctx.restore();
+}
+
+function drawLootCursor(){
+  if(gs.phase!=='lootUpgrade'||!gs.activeLoot)return;
+  const x=Math.min(CW-28,mousePos.x+28);
+  const y=Math.max(HUD+20,Math.min(CH-Q_BAR_H-20,mousePos.y));
+  ctx.save();
+  ctx.font='26px serif';
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  ctx.shadowColor='#ffd54a';
+  ctx.shadowBlur=14;
+  ctx.fillText('🎁',x,y);
+  ctx.font='16px sans-serif';
+  ctx.fillStyle='#fff3b0';
+  ctx.fillText(UPG_ICONS[gs.activeLoot.attr]||'🎟️',x+22,y-14);
   ctx.restore();
 }
 
@@ -1401,6 +1658,24 @@ function drawCornerHint(emoji,title,sub,hint){
   ctx.restore();
 }
 
+function drawMapNotice(){
+  if(!gs.mapNotice||gs.mapNotice.timer<=0)return;
+  const pct=Math.max(0,Math.min(1,gs.mapNotice.timer/gs.mapNotice.duration));
+  const bw=304,bh=40,bx=CW-bw-16,by=CH-Q_BAR_H-bh-14;
+  ctx.save();
+  ctx.globalAlpha=0.55+0.45*pct;
+  ctx.fillStyle='rgba(14,14,40,0.94)';
+  ctx.strokeStyle='#ffd700';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.roundRect(bx,by,bw,bh,18);ctx.fill();ctx.stroke();
+  ctx.textBaseline='middle';
+  ctx.textAlign='left';
+  ctx.font='bold 14px sans-serif';
+  ctx.fillStyle='#ffe680';
+  ctx.fillText(`🎁 ${gs.mapNotice.text}`,bx+14,by+21);
+  ctx.restore();
+}
+
 function setSpeed(v){
   gs.gameSpeed=v;
   document.getElementById('speedBadge').textContent=`${v.toFixed(1)}x`;
@@ -1417,6 +1692,13 @@ let lastTs=0;
 function loop(ts){
   const dt=Math.min((ts-lastTs)/1000,0.1);lastTs=ts;
   const simDt=dt*gs.gameSpeed;
+  updateLootChests(dt);
+  for(const t of floatTexts)t.update(dt);
+  floatTexts=floatTexts.filter(t=>t.life>0);
+  if(gs.mapNotice){
+    gs.mapNotice.timer-=dt;
+    if(gs.mapNotice.timer<=0)gs.mapNotice=null;
+  }
 
   if(gs.hero&&gs.hero.skillCd>0)gs.hero.skillCd=Math.max(0,gs.hero.skillCd-simDt);
   if(gs.globalPauseTimer>0)gs.globalPauseTimer=Math.max(0,gs.globalPauseTimer-simDt);
@@ -1457,10 +1739,13 @@ function loop(ts){
     ctx.restore();
   }
   for(const e of enemies)  e.draw();
+  drawLootChests();
   drawHero();
   for(const t of towers)   t.draw();
   for(const b of bullets)  b.draw();
   for(const p of particles)p.draw();
+  for(const t of floatTexts)t.draw();
+  drawLootCursor();
   drawHUD();
 
   if(gs.phase==='between'){
@@ -1477,6 +1762,10 @@ function loop(ts){
   if(gs.phase==='heroDeploy'){
     drawCornerHint(gs.hero?gs.hero.emoji:'🧭','部署勇者中','請點擊地圖空地放置勇者','部署完成後自動恢復遊戲');
   }
+  if(gs.phase==='lootDeployCat'){
+    drawCornerHint('🐱','立即部署滿級貓咪塔','三種屬性都已滿級',gs.lootMessage||'請點擊地圖空地放置');
+  }
+  drawMapNotice();
   if(gs.phase==='win'){const st='⭐'.repeat(Math.max(1,gs.lives));drawModal('🎉','恭喜通關！',`${st}  金幣：🪙 ${gs.coins}`,'點擊重新遊玩');}
   if(gs.phase==='lose')drawModal('💀','遊戲結束！','怪獸突破了防線⋯','點擊重新遊玩');
   requestAnimationFrame(loop);
@@ -1487,6 +1776,7 @@ function loop(ts){
 // ════════════════════════════════════════════════════════
 canvas.addEventListener('mousemove',e=>{
   const r=canvas.getBoundingClientRect();
+  mousePos={x:e.clientX-r.left,y:e.clientY-r.top};
   hoverCell={gx:Math.floor((e.clientX-r.left)/CELL),gy:Math.floor((e.clientY-r.top)/CELL)};
 });
 canvas.addEventListener('mouseleave',()=>{hoverCell=null;});
@@ -1506,10 +1796,26 @@ document.getElementById('difficultyToggleBtn').addEventListener('click',e=>{
 });
 document.getElementById('gameControls').addEventListener('click',e=>e.stopPropagation());
 document.addEventListener('click',()=>closeControlMenus());
+document.addEventListener('keydown',e=>{
+  if(e.repeat)return;
+  if(e.key==='d'||e.key==='D'){
+    gs.debugForcedLoot=!gs.debugForcedLoot;
+  }
+});
 canvas.addEventListener('click',e=>{
   const r=canvas.getBoundingClientRect();
   const mx=e.clientX-r.left,my=e.clientY-r.top;
   if(gs.phase==='win'||gs.phase==='lose'){initState();return;}
+  if(gs.phase==='lootUpgrade'){
+    useLootUpgradeOnTarget(mx,my);
+    return;
+  }
+  if(gs.phase==='lootDeployCat'){
+    if(my<HUD||my>CH-Q_BAR_H)return;
+    const gx=Math.floor(mx/CELL),gy=Math.floor(my/CELL);
+    placeLootCatTower(gx,gy);
+    return;
+  }
   if(gs.phase==='heroDeploy'){
     if(my<HUD||my>CH-Q_BAR_H)return;
     const gx=Math.floor(mx/CELL),gy=Math.floor(my/CELL);
@@ -1523,6 +1829,8 @@ canvas.addEventListener('click',e=>{
   }
   if(gs.phase==='chestIntro')return;
   closeControlMenus();
+  const lootHit=lootChestAt(mx,my);
+  if(lootHit){claimLootChest(lootHit.index);return;}
   if(heroAt(mx,my)){openHeroMenu(mx,my);return;}
   if(panelTarget){closePanel();return;}
   if(my<HUD||my>CH-Q_BAR_H)return; // ignore HUD and question bar area
